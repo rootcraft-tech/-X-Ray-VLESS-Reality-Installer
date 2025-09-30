@@ -13,7 +13,7 @@ Automated installation script for X-Ray VLESS + REALITY VPN server on Ubuntu 24.
 ⚡ **One-command installation on clean Ubuntu 24.04 server:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/your-username/xray-vless-reality-installer/main/install-xray.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/rootcraft-tech/xray-vless-reality-installer/main/install-xray.sh | sudo bash
 ```
 
 ## 🌟 What is VLESS + REALITY?
