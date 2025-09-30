@@ -3,9 +3,9 @@
 # X-Ray VLESS + REALITY VPN Automated Installation Script
 # Based on the guide: "Creating VPN Server with X-Ray VLESS + REALITY"
 # Compatible with Ubuntu 24.04 LTS
-# Version: 1.0
+# Version: 1.1
 # Author: ViT
-# Repository: https://github.com/your-username/xray-vless-reality-installer
+# Repository: https://github.com/rootcraft-tech/-X-Ray-VLESS-Reality-Installer
 
 set -e
 
@@ -54,10 +54,16 @@ check_ubuntu() {
     VERSION=$(lsb_release -rs)
     if [[ "$VERSION" != "24.04" ]]; then
         print_warning "Script tested on Ubuntu 24.04, you have version $VERSION"
-        read -p "Continue installation? (y/N): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
+        
+        # Check if running interactively
+        if [[ -t 0 ]]; then
+            read -p "Continue installation? (y/N): " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                exit 1
+            fi
+        else
+            print_status "Non-interactive mode: continuing with Ubuntu $VERSION"
         fi
     fi
 }
@@ -76,7 +82,12 @@ get_external_ip() {
     
     if [[ -z "$EXTERNAL_IP" ]]; then
         print_error "Failed to detect external IP address"
-        read -p "Enter server external IP address manually: " EXTERNAL_IP
+        if [[ -t 0 ]]; then
+            read -p "Enter server external IP address manually: " EXTERNAL_IP
+        else
+            print_error "Cannot prompt for IP in non-interactive mode"
+            exit 1
+        fi
     fi
     
     print_status "External IP address: $EXTERNAL_IP"
@@ -120,10 +131,16 @@ stop_conflicting_services() {
     if netstat -tlnp 2>/dev/null | grep -q ":443 "; then
         print_warning "Port 443 is occupied by another process!"
         netstat -tlnp | grep ":443 "
-        read -p "Continue installation? (y/N): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
+        
+        # Check if running interactively
+        if [[ -t 0 ]]; then
+            read -p "Continue installation? (y/N): " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                exit 1
+            fi
+        else
+            print_status "Non-interactive mode: continuing despite port conflict"
         fi
     fi
 }
@@ -410,17 +427,26 @@ final_check() {
 
 # Main function
 main() {
-    print_header "X-RAY VLESS + REALITY VPN AUTO-INSTALLER v1.0"
+    print_header "X-RAY VLESS + REALITY VPN AUTO-INSTALLER v1.1"
     print_status "Automated installation of X-Ray VLESS + REALITY VPN server"
     print_warning "Make sure you're running this script on a clean Ubuntu 24.04 server"
-    print_status "Based on guide: github.com/your-username/xray-vless-reality-installer"
+    print_status "Repository: https://github.com/rootcraft-tech/-X-Ray-VLESS-Reality-Installer"
     
     echo
-    read -p "Continue installation? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        print_status "Installation cancelled"
-        exit 0
+    
+    # Check if running interactively
+    if [[ -t 0 ]]; then
+        # Interactive mode
+        read -p "Continue installation? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            print_status "Installation cancelled"
+            exit 0
+        fi
+    else
+        # Non-interactive mode (pipe)
+        print_status "Running in non-interactive mode, proceeding with installation..."
+        sleep 2
     fi
     
     check_root
