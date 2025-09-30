@@ -13,7 +13,7 @@
 ⚡ **Установка одной командой на чистом сервере Ubuntu 24.04:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/your-username/xray-vless-reality-installer/main/install-xray.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/rootcraft-tech/xray-vless-reality-installer/main/install-xray.sh | sudo bash
 ```
 
 ## 🌟 Что такое VLESS + REALITY?
