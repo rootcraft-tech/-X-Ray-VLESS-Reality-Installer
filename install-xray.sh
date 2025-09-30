@@ -3,11 +3,14 @@
 # X-Ray VLESS + REALITY VPN Automated Installation Script
 # Based on the guide: "Creating VPN Server with X-Ray VLESS + REALITY"
 # Compatible with Ubuntu 24.04 LTS
-# Version: 1.1
+# Version: 1.2
 # Author: ViT
 # Repository: https://github.com/rootcraft-tech/-X-Ray-VLESS-Reality-Installer
 
 set -e
+
+# Set non-interactive mode for apt
+export DEBIAN_FRONTEND=noninteractive
 
 # Colors for output
 RED='\033[0;31m'
@@ -97,8 +100,13 @@ get_external_ip() {
 update_system() {
     print_header "SYSTEM UPDATE"
     print_status "Updating system packages..."
+    print_status "Using non-interactive mode to avoid configuration prompts"
+    
+    # Ensure non-interactive mode
+    export DEBIAN_FRONTEND=noninteractive
+    
     apt update -y
-    apt upgrade -y
+    apt upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
     apt install curl wget unzip openssl net-tools -y
     print_status "System updated"
 }
@@ -427,7 +435,7 @@ final_check() {
 
 # Main function
 main() {
-    print_header "X-RAY VLESS + REALITY VPN AUTO-INSTALLER v1.1"
+    print_header "X-RAY VLESS + REALITY VPN AUTO-INSTALLER v1.2"
     print_status "Automated installation of X-Ray VLESS + REALITY VPN server"
     print_warning "Make sure you're running this script on a clean Ubuntu 24.04 server"
     print_status "Repository: https://github.com/rootcraft-tech/-X-Ray-VLESS-Reality-Installer"
