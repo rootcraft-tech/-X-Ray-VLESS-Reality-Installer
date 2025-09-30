@@ -1,0 +1,38 @@
+# Logs
+*.log
+
+# Runtime data
+*.pid
+*.seed
+*.pid.lock
+
+# Configuration files with sensitive data
+config.json
+*.key
+*.pem
+
+# Client configuration files
+*client_configs.txt
+
+# Temporary files
+*.tmp
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Backup files
+*.bak
+*.backup
