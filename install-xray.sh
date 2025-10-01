@@ -3,7 +3,7 @@
 # X-Ray VLESS + REALITY VPN Automated Installation Script
 # Based on the guide: "Creating VPN Server with X-Ray VLESS + REALITY"
 # Compatible with Ubuntu 24.04 LTS
-# Version: 1.2
+# Version: 1.3
 # Author: ViT
 # Repository: https://github.com/rootcraft-tech/-X-Ray-VLESS-Reality-Installer
 
@@ -107,19 +107,45 @@ update_system() {
     
     apt update -y
     apt upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
-    apt install curl wget unzip openssl net-tools -y
+    apt install curl wget unzip openssl net-tools lsb-release -y
     print_status "System updated"
 }
 
 # Configure firewall
 setup_firewall() {
     print_header "FIREWALL CONFIGURATION"
+    
+    # Check if UFW is installed
+    if ! command -v ufw &> /dev/null; then
+        print_status "UFW not found, installing UFW..."
+        apt update -y
+        apt install ufw -y
+        print_status "UFW installed successfully"
+    else
+        print_status "UFW is already installed"
+    fi
+    
     print_status "Configuring UFW..."
+    
+    # Reset UFW to default state
     ufw --force reset
-    ufw allow 22/tcp
-    ufw allow 443/tcp
+    
+    # Set default policies
+    ufw default deny incoming
+    ufw default allow outgoing
+    
+    # Allow SSH and HTTPS
+    ufw allow 22/tcp comment 'SSH'
+    ufw allow 443/tcp comment 'X-Ray VLESS'
+    
+    # Enable UFW
     ufw --force enable
-    print_status "Firewall configured"
+    
+    # Show status
+    print_status "UFW status:"
+    ufw status numbered
+    
+    print_status "Firewall configured successfully"
 }
 
 # Stop conflicting services
@@ -429,13 +455,16 @@ final_check() {
     print_status "Checking ports..."
     ss -tlnp | grep ":443"
     
+    print_status "Checking firewall status..."
+    ufw status numbered
+    
     print_status "Checking logs..."
     journalctl -u xray -n 5 --no-pager
 }
 
 # Main function
 main() {
-    print_header "X-RAY VLESS + REALITY VPN AUTO-INSTALLER v1.2"
+    print_header "X-RAY VLESS + REALITY VPN AUTO-INSTALLER v1.3"
     print_status "Automated installation of X-Ray VLESS + REALITY VPN server"
     print_warning "Make sure you're running this script on a clean Ubuntu 24.04 server"
     print_status "Repository: https://github.com/rootcraft-tech/-X-Ray-VLESS-Reality-Installer"
@@ -482,6 +511,7 @@ main() {
     echo "  systemctl status xray              # Service status"
     echo "  journalctl -u xray -f              # Real-time logs"
     echo "  ss -tlnp | grep :443               # Port check"
+    echo "  ufw status                         # Firewall status"
     
     print_warning "Save configurations in a secure place!"
     print_header "VPN SERVER IS READY TO USE! 🚀"
