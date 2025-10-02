@@ -10,6 +10,8 @@ Automated installation script for X-Ray VLESS + REALITY VPN server on Ubuntu 24.
 
 ## 🚀 Quick Installation
 
+⚡ **Recommended:** Tested and optimized for VPS servers [MyHosti.pro](https://myhosti.pro/services/vds)
+
 ⚡ **One-command installation on clean Ubuntu 24.04 server:**
 
 ```bash
