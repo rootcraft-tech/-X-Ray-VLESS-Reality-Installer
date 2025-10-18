@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# X-Ray VLESS + REALITY VPN Automated Installation Script (SECURE VERSION)
+# X-Ray VLESS + REALITY VPN Automated Installation Script (SECURE VERSION - FIXED)
 # Based on the guide: "Creating VPN Server with X-Ray VLESS + REALITY"
 # Compatible with Ubuntu 24.04 LTS
-# Version: 2.0 (Security Hardened)
+# Version: 2.0.1 (Security Hardened - Permission Fix)
 # Author: ViT
 # Repository: https://github.com/rootcraft-tech/-X-Ray-VLESS-Reality-Installer
 # 
@@ -13,10 +13,14 @@
 # - Blocked private IP ranges (geoip:private)
 # - Blocked advertising domains (geosite:category-ads-all)
 # - Added comprehensive access and error logging
-# - Protected configuration files (chmod 600)
+# - Protected configuration files (chmod 640 - readable by xray service)
 # - Added traffic monitoring script
 # - Added security warnings about UUID protection
 # - Improved routing rules to prevent abuse
+#
+# FIX v2.0.1:
+# - Changed config file permissions from 600 to 640 (nobody can read, root can write)
+# - X-Ray service runs as 'nobody' user, needs read access to config
 
 set -e
 
@@ -256,6 +260,7 @@ create_xray_config() {
     print_status "Creating log directory..."
     mkdir -p /var/log/xray
     chmod 755 /var/log/xray
+    chown nobody:nogroup /var/log/xray
     
     print_status "Creating secure configuration file..."
     print_security "Applying security rules:"
@@ -385,13 +390,13 @@ EOF
         exit 1
     fi
     
-    # Secure configuration file
+    # Secure configuration file - 640 allows nobody (xray service) to read
     print_status "Securing configuration file..."
-    chmod 600 /usr/local/etc/xray/config.json
-    chown root:root /usr/local/etc/xray/config.json
+    chmod 640 /usr/local/etc/xray/config.json
+    chown root:nobody /usr/local/etc/xray/config.json
     
-    print_security "Configuration file protected (chmod 600)"
-    print_security "Only root can read/write this file"
+    print_security "Configuration file protected (chmod 640)"
+    print_security "Root can read/write, X-Ray service (nobody) can read"
 }
 
 # Setup log rotation
@@ -434,7 +439,8 @@ start_xray_service() {
         print_status "X-Ray service started successfully"
     else
         print_error "X-Ray service startup failed"
-        systemctl status xray
+        print_error "Checking logs..."
+        journalctl -u xray -n 20 --no-pager
         exit 1
     fi
     
@@ -447,11 +453,11 @@ start_xray_service() {
     for i in {1..5}; do
         sleep 2
         if ss -tlnp | grep -q ":443.*xray"; then
-            print_status "X-Ray is listening on port 443"
+            print_status "✓ X-Ray is listening on port 443"
             break
         elif [[ $i -eq 5 ]]; then
-            print_warning "X-Ray is not listening on port 443, but service is running"
-            print_status "Try restarting: systemctl restart xray"
+            print_warning "X-Ray is not listening on port 443, checking logs..."
+            journalctl -u xray -n 10 --no-pager
         fi
     done
 }
@@ -562,10 +568,10 @@ echo ""
 # Check configuration file permissions
 echo "=== Configuration file security ==="
 CONFIG_PERMS=$(stat -c "%a" /usr/local/etc/xray/config.json 2>/dev/null)
-if [ "$CONFIG_PERMS" = "600" ]; then
+if [ "$CONFIG_PERMS" = "640" ]; then
     echo "✓ Configuration file permissions: $CONFIG_PERMS (SECURE)"
 else
-    echo "✗ Configuration file permissions: $CONFIG_PERMS (INSECURE - should be 600)"
+    echo "✗ Configuration file permissions: $CONFIG_PERMS (INSECURE - should be 640)"
 fi
 
 # Check if SMTP ports are blocked in config
@@ -674,7 +680,7 @@ create_client_configs() {
     cat > "$CONFIG_FILE" << EOF
 ================================================================================
                     X-RAY VLESS + REALITY VPN CONFIGURATION
-                          SECURITY HARDENED v2.0
+                          SECURITY HARDENED v2.0.1
 ================================================================================
 
 Server successfully configured and running with enhanced security!
@@ -685,7 +691,7 @@ Server successfully configured and running with enhanced security!
 - ✓ Private IP ranges blocked - prevents network scanning
 - ✓ Advertising domains blocked - additional protection
 - ✓ Comprehensive logging enabled - for security monitoring
-- ✓ Configuration files protected (chmod 600)
+- ✓ Configuration files protected (chmod 640)
 - ✓ Log rotation configured (7 days retention)
 
 SERVER DATA:
@@ -834,9 +840,9 @@ final_check() {
 
 # Main function
 main() {
-    print_header "X-RAY VLESS + REALITY VPN AUTO-INSTALLER v2.0 (SECURE)"
+    print_header "X-RAY VLESS + REALITY VPN AUTO-INSTALLER v2.0.1 (SECURE)"
     print_status "Automated installation of X-Ray VLESS + REALITY VPN server"
-    print_security "Version 2.0 includes enhanced security features"
+    print_security "Version 2.0.1 includes enhanced security features + permission fix"
     print_warning "Make sure you're running this script on a clean Ubuntu 24.04 server"
     print_status "Repository: https://github.com/rootcraft-tech/-X-Ray-VLESS-Reality-Installer"
     
@@ -846,7 +852,7 @@ main() {
     print_security "  ✓ BitTorrent blocked (prevents torrent abuse)"
     print_security "  ✓ Private IPs blocked (prevents network scanning)"
     print_security "  ✓ Enhanced logging and monitoring"
-    print_security "  ✓ Configuration file protection"
+    print_security "  ✓ Configuration file protection (chmod 640)"
     print_security "  ✓ Security audit tools included"
     echo
     
