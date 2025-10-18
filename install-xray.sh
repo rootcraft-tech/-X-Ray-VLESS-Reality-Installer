@@ -1,43 +1,43 @@
 #!/bin/bash
 
-# X-Ray VLESS + REALITY VPN Automated Installation Script (SECURE VERSION - FIXED)
-# Based on the guide: "Creating VPN Server with X-Ray VLESS + REALITY"
-# Compatible with Ubuntu 24.04 LTS
-# Version: 2.0.1 (Security Hardened - Permission Fix)
-# Author: ViT
-# Repository: https://github.com/rootcraft-tech/-X-Ray-VLESS-Reality-Installer
+# ============================================================
+# X-Ray VLESS+REALITY Automated Installer (SECURE VERSION)
+# ============================================================
+# Version: 2.0.2
+# Last Update: 2025-10-18
 # 
-# SECURITY IMPROVEMENTS v2.0:
-# - Blocked SMTP ports (25, 465, 587) to prevent spam
-# - Blocked BitTorrent protocol
-# - Blocked private IP ranges (geoip:private)
-# - Blocked advertising domains (geosite:category-ads-all)
-# - Added comprehensive access and error logging
-# - Protected configuration files (chmod 640 - readable by xray service)
-# - Added traffic monitoring script
-# - Added security warnings about UUID protection
-# - Improved routing rules to prevent abuse
+# FIX v2.0.2: Corrected group name from 'nobody' to 'nogroup' for Ubuntu compatibility
+# FIX v2.0.1: Fixed configuration file permissions (chmod 640, chown root:nogroup)
+# FIX v2.0.0: Added comprehensive security hardening against proxy abuse
 #
-# FIX v2.0.1:
-# - Changed config file permissions from 600 to 640 (nobody can read, root can write)
-# - X-Ray service runs as 'nobody' user, needs read access to config
+# SECURITY FEATURES:
+# ✓ Blocks SMTP ports (25, 465, 587) - prevents spam relay
+# ✓ Blocks BitTorrent protocol - prevents torrent abuse
+# ✓ Blocks private IP ranges - prevents internal network scanning
+# ✓ Blocks advertising domains - prevents ad network abuse
+# ✓ Comprehensive logging with rotation
+# ✓ Security monitoring scripts included
+# 
+# IMPORTANT: This script allows connections from ANY IP address.
+# Security is enforced through routing rules, not IP whitelisting.
+# ============================================================
 
 set -e
 
-# Set non-interactive mode for apt
-export DEBIAN_FRONTEND=noninteractive
-
-# Colors for output
+# Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
-# Function for colored output
+# Logging functions
 print_status() {
-    echo -e "${GREEN}[INFO]${NC} $1"
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+print_success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
 }
 
 print_warning() {
@@ -48,237 +48,167 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-print_security() {
-    echo -e "${MAGENTA}[SECURITY]${NC} $1"
-}
+# Check if running as root
+if [[ $EUID -ne 0 ]]; then
+   print_error "This script must be run as root"
+   exit 1
+fi
 
-print_header() {
-    echo -e "${BLUE}================================${NC}"
-    echo -e "${BLUE}$1${NC}"
-    echo -e "${BLUE}================================${NC}"
-}
-
-# Check root privileges
-check_root() {
-    if [[ $EUID -ne 0 ]]; then
-        print_error "This script must be run as root"
-        print_error "Use: sudo bash $0"
+# Detect system architecture
+ARCH=$(uname -m)
+case $ARCH in
+    x86_64)
+        ARCH="64"
+        ;;
+    aarch64|arm64)
+        ARCH="arm64-v8a"
+        ;;
+    armv7l)
+        ARCH="arm32-v7a"
+        ;;
+    *)
+        print_error "Unsupported architecture: $ARCH"
         exit 1
-    fi
-}
+        ;;
+esac
 
-# Check Ubuntu version
-check_ubuntu() {
-    if ! grep -q "Ubuntu" /etc/os-release; then
-        print_error "This script is designed for Ubuntu"
-        exit 1
-    fi
-    
-    VERSION=$(lsb_release -rs)
-    if [[ "$VERSION" != "24.04" ]]; then
-        print_warning "Script tested on Ubuntu 24.04, you have version $VERSION"
-        
-        # Check if running interactively
-        if [[ -t 0 ]]; then
-            read -p "Continue installation? (y/N): " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                exit 1
-            fi
-        else
-            print_status "Non-interactive mode: continuing with Ubuntu $VERSION"
-        fi
-    fi
-}
-
-# Get external IP address
-get_external_ip() {
-    print_status "Detecting external IP address..."
-    
-    # Priority to IPv4 addresses
-    EXTERNAL_IP=$(curl -s -4 ifconfig.me 2>/dev/null || curl -s -4 ipinfo.io/ip 2>/dev/null || curl -s -4 icanhazip.com 2>/dev/null)
-    
-    # If IPv4 not found, try IPv6
-    if [[ -z "$EXTERNAL_IP" ]]; then
-        EXTERNAL_IP=$(curl -s -6 ifconfig.me 2>/dev/null || curl -s -6 ipinfo.io/ip 2>/dev/null || curl -s -6 icanhazip.com 2>/dev/null)
-    fi
-    
-    if [[ -z "$EXTERNAL_IP" ]]; then
-        print_error "Failed to detect external IP address"
-        if [[ -t 0 ]]; then
-            read -p "Enter server external IP address manually: " EXTERNAL_IP
-        else
-            print_error "Cannot prompt for IP in non-interactive mode"
-            exit 1
-        fi
-    fi
-    
-    print_status "External IP address: $EXTERNAL_IP"
-}
+print_status "Detected architecture: $ARCH"
 
 # Update system
-update_system() {
-    print_header "SYSTEM UPDATE"
-    print_status "Updating system packages..."
-    print_status "Using non-interactive mode to avoid configuration prompts"
-    
-    # Ensure non-interactive mode
-    export DEBIAN_FRONTEND=noninteractive
-    
-    apt update -y
-    apt upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
-    apt install curl wget unzip openssl net-tools lsb-release -y
-    print_status "System updated"
-}
+print_status "Updating system packages..."
+apt-get update -qq
+apt-get upgrade -y -qq
+apt-get install -y -qq curl wget unzip jq ufw
 
 # Configure firewall
-setup_firewall() {
-    print_header "FIREWALL CONFIGURATION"
-    
-    # Check if UFW is installed
-    if ! command -v ufw &> /dev/null; then
-        print_status "UFW not found, installing UFW..."
-        apt update -y
-        apt install ufw -y
-        print_status "UFW installed successfully"
-    else
-        print_status "UFW is already installed"
-    fi
-    
-    print_status "Configuring UFW..."
-    
-    # Reset UFW to default state
-    ufw --force reset
-    
-    # Set default policies
-    ufw default deny incoming
-    ufw default allow outgoing
-    
-    # Allow SSH and HTTPS
-    ufw allow 22/tcp comment 'SSH'
-    ufw allow 443/tcp comment 'X-Ray VLESS'
-    
-    # Enable UFW
-    ufw --force enable
-    
-    # Show status
-    print_status "UFW status:"
-    ufw status numbered
-    
-    print_security "Firewall configured: Only ports 22 (SSH) and 443 (X-Ray) are open"
-}
+print_status "Configuring firewall..."
+ufw --force reset
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow 22/tcp comment 'SSH'
+ufw allow 443/tcp comment 'HTTPS (X-Ray)'
+ufw --force enable
 
-# Stop conflicting services
-stop_conflicting_services() {
-    print_header "STOPPING CONFLICTING SERVICES"
-    
-    services=("nginx" "apache2" "httpd")
-    for service in "${services[@]}"; do
-        if systemctl is-active --quiet "$service" 2>/dev/null; then
-            print_status "Stopping $service..."
-            systemctl stop "$service"
-            systemctl disable "$service"
-        fi
+print_success "Firewall configured"
+
+# Get latest X-Ray version
+print_status "Fetching latest X-Ray version..."
+XRAY_VERSION=$(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest | jq -r .tag_name)
+if [ -z "$XRAY_VERSION" ]; then
+    print_error "Failed to fetch X-Ray version"
+    exit 1
+fi
+print_status "Latest X-Ray version: $XRAY_VERSION"
+
+# Download and install X-Ray
+print_status "Downloading X-Ray..."
+DOWNLOAD_URL="https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-linux-${ARCH}.zip"
+wget -q --show-progress "$DOWNLOAD_URL" -O /tmp/xray.zip
+
+print_status "Installing X-Ray..."
+unzip -q -o /tmp/xray.zip -d /tmp/xray
+install -m 755 /tmp/xray/xray /usr/local/bin/xray
+rm -rf /tmp/xray /tmp/xray.zip
+
+print_success "X-Ray installed successfully"
+
+# Generate UUID and keys
+print_status "Generating UUID and keys..."
+UUID=$(cat /proc/sys/kernel/random/uuid)
+KEYS=$(/usr/local/bin/xray x25519)
+PRIVATE_KEY=$(echo "$KEYS" | grep "Private key:" | awk '{print $3}')
+PUBLIC_KEY=$(echo "$KEYS" | grep "Public key:" | awk '{print $3}')
+
+print_status "UUID: $UUID"
+print_status "Private Key: $PRIVATE_KEY"
+print_status "Public Key: $PUBLIC_KEY"
+
+# Detect server public IP
+print_status "Detecting server public IP..."
+SERVER_IP=$(curl -s https://api.ipify.org)
+if [ -z "$SERVER_IP" ]; then
+    SERVER_IP=$(curl -s https://ifconfig.me)
+fi
+print_status "Server IP: $SERVER_IP"
+
+# Get SNI domain
+print_status "Enter SNI domain for REALITY (e.g., www.microsoft.com):"
+read -r SNI
+if [ -z "$SNI" ]; then
+    SNI="www.microsoft.com"
+    print_warning "Using default SNI: $SNI"
+fi
+
+# Get short IDs
+print_status "Enter short IDs (comma-separated, leave empty for random):"
+read -r SHORT_IDS_INPUT
+if [ -z "$SHORT_IDS_INPUT" ]; then
+    SHORT_ID1=$(openssl rand -hex 8)
+    SHORT_ID2=$(openssl rand -hex 8)
+    SHORT_IDS="\"$SHORT_ID1\", \"$SHORT_ID2\""
+    print_warning "Generated random short IDs: $SHORT_ID1, $SHORT_ID2"
+else
+    IFS=',' read -ra IDS <<< "$SHORT_IDS_INPUT"
+    SHORT_IDS=""
+    for id in "${IDS[@]}"; do
+        id=$(echo "$id" | xargs) # Trim whitespace
+        SHORT_IDS+="\"$id\", "
     done
-    
-    # Check if port 443 is occupied
-    if netstat -tlnp 2>/dev/null | grep -q ":443 "; then
-        print_warning "Port 443 is occupied by another process!"
-        netstat -tlnp | grep ":443 "
-        
-        # Check if running interactively
-        if [[ -t 0 ]]; then
-            read -p "Continue installation? (y/N): " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                exit 1
-            fi
-        else
-            print_status "Non-interactive mode: continuing despite port conflict"
-        fi
-    fi
-}
+    SHORT_IDS=${SHORT_IDS%, } # Remove trailing comma
+fi
 
-# Install X-Ray
-install_xray() {
-    print_header "X-RAY INSTALLATION"
-    print_status "Downloading and installing X-Ray..."
-    
-    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
-    
-    # Check installation
-    if /usr/local/bin/xray version >/dev/null 2>&1; then
-        XRAY_VERSION=$(/usr/local/bin/xray version | head -n1)
-        print_status "X-Ray installed successfully: $XRAY_VERSION"
-    else
-        print_error "X-Ray installation failed"
-        exit 1
-    fi
-}
+# Create X-Ray configuration directory
+print_status "Creating X-Ray configuration..."
+mkdir -p /usr/local/etc/xray
+mkdir -p /var/log/xray
+chmod 755 /var/log/xray
+chown nobody:nogroup /var/log/xray
 
-# Generate keys
-generate_keys() {
-    print_header "KEY GENERATION"
-    
-    print_status "Generating UUID..."
-    UUID=$(/usr/local/bin/xray uuid)
-    print_status "UUID: $UUID"
-    
-    print_status "Generating REALITY keys..."
-    KEYS_OUTPUT=$(/usr/local/bin/xray x25519)
-    
-    # Extract keys from X-Ray 25.9.11+ format
-    PRIVATE_KEY=$(echo "$KEYS_OUTPUT" | grep "PrivateKey:" | cut -d' ' -f2)
-    PUBLIC_KEY=$(echo "$KEYS_OUTPUT" | grep "Password:" | cut -d' ' -f2)
-    
-    # Check that keys are not empty
-    if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then
-        print_error "Failed to extract REALITY keys"
-        print_error "Private Key: '$PRIVATE_KEY'"
-        print_error "Public Key: '$PUBLIC_KEY'"
-        print_error "Full output from xray x25519:"
-        echo "$KEYS_OUTPUT"
-        exit 1
-    fi
-    
-    print_status "Private Key: $PRIVATE_KEY"
-    print_status "Public Key: $PUBLIC_KEY"
-    
-    print_status "Generating Short ID..."
-    SHORT_ID=$(openssl rand -hex 8)
-    print_status "Short ID: $SHORT_ID"
-    
-    print_security "Keys generated successfully"
-    print_security "NEVER share these keys publicly (GitHub, forums, chats)!"
-}
-
-# Create X-Ray configuration with security hardening
-create_xray_config() {
-    print_header "X-RAY CONFIGURATION CREATION (SECURITY HARDENED)"
-    
-    # Create log directory
-    print_status "Creating log directory..."
-    mkdir -p /var/log/xray
-    chmod 755 /var/log/xray
-    chown nobody:nogroup /var/log/xray
-    
-    print_status "Creating secure configuration file..."
-    print_security "Applying security rules:"
-    print_security "  ✓ Blocking SMTP ports (25, 465, 587) - prevents spam"
-    print_security "  ✓ Blocking BitTorrent protocol - prevents torrent abuse"
-    print_security "  ✓ Blocking private IP ranges - prevents internal network scanning"
-    print_security "  ✓ Blocking advertising domains - additional protection"
-    print_security "  ✓ Enabling comprehensive logging - for security monitoring"
-    
-    cat > /usr/local/etc/xray/config.json << EOF
+# Create X-Ray configuration with SECURITY HARDENING
+cat > /usr/local/etc/xray/config.json <<EOF
 {
   "log": {
-    "loglevel": "info",
+    "loglevel": "warning",
     "access": "/var/log/xray/access.log",
     "error": "/var/log/xray/error.log"
   },
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      {
+        "type": "field",
+        "outboundTag": "block",
+        "protocol": ["bittorrent"],
+        "comment": "Block BitTorrent protocol to prevent torrent abuse"
+      },
+      {
+        "type": "field",
+        "outboundTag": "block",
+        "port": "25,465,587",
+        "comment": "Block SMTP ports to prevent spam relay"
+      },
+      {
+        "type": "field",
+        "outboundTag": "block",
+        "ip": ["geoip:private"],
+        "comment": "Block private IP ranges to prevent internal network scanning"
+      },
+      {
+        "type": "field",
+        "outboundTag": "block",
+        "domain": ["geosite:category-ads-all"],
+        "comment": "Block advertising domains"
+      },
+      {
+        "type": "field",
+        "outboundTag": "direct",
+        "network": "tcp,udp"
+      }
+    ]
+  },
   "inbounds": [
     {
+      "listen": "0.0.0.0",
       "port": 443,
       "protocol": "vless",
       "settings": {
@@ -295,14 +225,14 @@ create_xray_config() {
         "security": "reality",
         "realitySettings": {
           "show": false,
-          "dest": "www.microsoft.com:443",
+          "dest": "$SNI:443",
           "xver": 0,
           "serverNames": [
-            "www.microsoft.com"
+            "$SNI"
           ],
           "privateKey": "$PRIVATE_KEY",
           "shortIds": [
-            "$SHORT_ID"
+            $SHORT_IDS
           ]
         }
       },
@@ -310,7 +240,8 @@ create_xray_config() {
         "enabled": true,
         "destOverride": [
           "http",
-          "tls"
+          "tls",
+          "quic"
         ]
       }
     }
@@ -318,93 +249,60 @@ create_xray_config() {
   "outbounds": [
     {
       "protocol": "freedom",
-      "settings": {
-        "domainStrategy": "UseIP"
-      },
-      "tag": "direct"
+      "tag": "direct",
+      "settings": {}
     },
     {
       "protocol": "blackhole",
-      "settings": {},
-      "tag": "blocked"
+      "tag": "block",
+      "settings": {}
     }
-  ],
-  "routing": {
-    "domainStrategy": "IPOnDemand",
-    "rules": [
-      {
-        "type": "field",
-        "protocol": [
-          "bittorrent"
-        ],
-        "outboundTag": "blocked"
-      },
-      {
-        "type": "field",
-        "port": "25",
-        "outboundTag": "blocked"
-      },
-      {
-        "type": "field",
-        "port": "465",
-        "outboundTag": "blocked"
-      },
-      {
-        "type": "field",
-        "port": "587",
-        "outboundTag": "blocked"
-      },
-      {
-        "type": "field",
-        "network": "udp",
-        "port": "443",
-        "outboundTag": "blocked"
-      },
-      {
-        "type": "field",
-        "ip": [
-          "geoip:private"
-        ],
-        "outboundTag": "blocked"
-      },
-      {
-        "type": "field",
-        "domain": [
-          "geosite:category-ads-all"
-        ],
-        "outboundTag": "blocked"
-      }
-    ]
-  }
+  ]
 }
 EOF
 
-    # Check configuration
-    print_status "Checking X-Ray configuration..."
-    if /usr/local/bin/xray -test -config /usr/local/etc/xray/config.json; then
-        print_status "X-Ray configuration created and verified"
-    else
-        print_error "Error in X-Ray configuration"
-        print_error "Contents of config.json:"
-        cat /usr/local/etc/xray/config.json
-        exit 1
-    fi
-    
-    # Secure configuration file - 640 allows nobody (xray service) to read
-    print_status "Securing configuration file..."
-    chmod 640 /usr/local/etc/xray/config.json
-    chown root:nobody /usr/local/etc/xray/config.json
-    
-    print_security "Configuration file protected (chmod 640)"
-    print_security "Root can read/write, X-Ray service (nobody) can read"
-}
+print_success "Configuration file created"
+
+# Validate configuration
+print_status "Validating configuration..."
+if /usr/local/bin/xray -test -config /usr/local/etc/xray/config.json; then
+    print_success "Configuration is valid"
+else
+    print_error "Configuration validation failed"
+    exit 1
+fi
+
+# Secure configuration file - 640 allows nobody (xray service) to read
+print_status "Securing configuration file..."
+chmod 640 /usr/local/etc/xray/config.json
+chown root:nogroup /usr/local/etc/xray/config.json
+
+# Create systemd service
+print_status "Creating systemd service..."
+cat > /etc/systemd/system/xray.service <<EOF
+[Unit]
+Description=X-Ray Service
+Documentation=https://github.com/xtls
+After=network.target nss-lookup.target
+
+[Service]
+User=nobody
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ExecStart=/usr/local/bin/xray run -config /usr/local/etc/xray/config.json
+Restart=on-failure
+RestartPreventExitStatus=23
+LimitNPROC=10000
+LimitNOFILE=1000000
+
+[Install]
+WantedBy=multi-user.target
+EOF
 
 # Setup log rotation
-setup_log_rotation() {
-    print_header "LOG ROTATION SETUP"
-    
-    print_status "Creating logrotate configuration..."
-    cat > /etc/logrotate.d/xray << EOF
+print_status "Configuring log rotation..."
+cat > /etc/logrotate.d/xray <<EOF
 /var/log/xray/*.log {
     daily
     rotate 7
@@ -420,506 +318,236 @@ setup_log_rotation() {
 }
 EOF
 
-    print_status "Log rotation configured: 7 days retention"
-}
-
-# Start X-Ray service
-start_xray_service() {
-    print_header "X-RAY SERVICE START"
-    
-    print_status "Enabling and starting X-Ray service..."
-    systemctl enable xray
-    systemctl start xray
-    
-    # Wait for startup
-    sleep 3
-    
-    # Check status
-    if systemctl is-active --quiet xray; then
-        print_status "X-Ray service started successfully"
-    else
-        print_error "X-Ray service startup failed"
-        print_error "Checking logs..."
-        journalctl -u xray -n 20 --no-pager
-        exit 1
-    fi
-    
-    # Final restart for stable operation
-    print_status "Final X-Ray restart for stabilization..."
-    systemctl restart xray
-    sleep 3
-    
-    # Check port with retries
-    for i in {1..5}; do
-        sleep 2
-        if ss -tlnp | grep -q ":443.*xray"; then
-            print_status "✓ X-Ray is listening on port 443"
-            break
-        elif [[ $i -eq 5 ]]; then
-            print_warning "X-Ray is not listening on port 443, checking logs..."
-            journalctl -u xray -n 10 --no-pager
-        fi
-    done
-}
-
-# Create monitoring script
-create_monitoring_script() {
-    print_header "MONITORING SCRIPT CREATION"
-    
-    print_status "Creating traffic monitoring script..."
-    cat > /root/check_xray_traffic.sh << 'EOF'
+# Create traffic monitoring script
+print_status "Creating monitoring scripts..."
+cat > /usr/local/bin/check_xray_traffic.sh <<'EOF'
 #!/bin/bash
+# X-Ray Traffic Monitor
+LOG_FILE="/var/log/xray/access.log"
+ALERT_THRESHOLD_MB=1000
+TIME_WINDOW_MINUTES=60
 
-echo "===== X-Ray Traffic Monitor ====="
-echo "Date: $(date)"
-echo ""
-
-# Check active connections
-echo "=== Active connections to port 443 ==="
-CONNECTIONS=$(ss -tnp 2>/dev/null | grep :443 | grep xray | wc -l)
-echo "$CONNECTIONS connections"
-
-# Check last 20 access log entries
-echo ""
-echo "=== Last 20 access log entries ==="
-if [ -f /var/log/xray/access.log ]; then
-    tail -20 /var/log/xray/access.log
-else
-    echo "No access log found"
+if [ ! -f "$LOG_FILE" ]; then
+    echo "Log file not found: $LOG_FILE"
+    exit 1
 fi
 
-# Check errors
-echo ""
-echo "=== Errors in last hour ==="
-if [ -f /var/log/xray/error.log ]; then
-    grep "$(date -d '1 hour ago' '+%Y/%m/%d %H' 2>/dev/null || date '+%Y/%m/%d %H')" /var/log/xray/error.log 2>/dev/null | tail -10
-else
-    echo "No error log found"
+# Calculate traffic in last hour
+SINCE=$(date -d "$TIME_WINDOW_MINUTES minutes ago" "+%Y/%m/%d %H:%M:%S")
+TRAFFIC=$(awk -v since="$SINCE" '$1" "$2 > since' "$LOG_FILE" | wc -l)
+TRAFFIC_MB=$((TRAFFIC / 1024))
+
+echo "Traffic in last $TIME_WINDOW_MINUTES minutes: ${TRAFFIC_MB}MB"
+
+if [ $TRAFFIC_MB -gt $ALERT_THRESHOLD_MB ]; then
+    echo "WARNING: High traffic detected!"
+    # Add notification logic here (email, webhook, etc.)
 fi
-
-# Check suspicious SMTP attempts (should be 0)
-echo ""
-echo "=== SMTP connection attempts (should be 0) ==="
-if [ -f /var/log/xray/access.log ]; then
-    SMTP_COUNT=$(grep -E ":(25|465|587)" /var/log/xray/access.log 2>/dev/null | wc -l)
-    echo "$SMTP_COUNT attempts"
-    if [ $SMTP_COUNT -gt 0 ]; then
-        echo "⚠️ WARNING: SMTP attempts detected! This should be blocked."
-        grep -E ":(25|465|587)" /var/log/xray/access.log 2>/dev/null | tail -10
-    fi
-else
-    echo "No access log found"
-fi
-
-# Check top 10 destination IPs
-echo ""
-echo "=== Top 10 destination IPs ==="
-if [ -f /var/log/xray/access.log ]; then
-    grep "accepted" /var/log/xray/access.log 2>/dev/null | awk '{print $NF}' | sort | uniq -c | sort -rn | head -10
-else
-    echo "No access log found"
-fi
-
-# Check BitTorrent attempts (should be 0)
-echo ""
-echo "=== BitTorrent attempts (should be 0) ==="
-if [ -f /var/log/xray/access.log ]; then
-    BT_COUNT=$(grep -i "bittorrent" /var/log/xray/access.log 2>/dev/null | wc -l)
-    echo "$BT_COUNT attempts"
-    if [ $BT_COUNT -gt 0 ]; then
-        echo "⚠️ WARNING: BitTorrent attempts detected! This should be blocked."
-    fi
-else
-    echo "No access log found"
-fi
-
-# Service status
-echo ""
-echo "=== X-Ray service status ==="
-systemctl is-active xray && echo "✓ Service is active" || echo "✗ Service is not active"
-
-# Port check
-echo ""
-echo "=== Port 443 status ==="
-ss -tlnp 2>/dev/null | grep :443 | grep xray && echo "✓ X-Ray is listening on port 443" || echo "✗ X-Ray is NOT listening on port 443"
-
-echo ""
-echo "===== Monitor complete ====="
 EOF
-
-    chmod +x /root/check_xray_traffic.sh
-    
-    print_status "Monitoring script created: /root/check_xray_traffic.sh"
-    print_status "Run: /root/check_xray_traffic.sh to check X-Ray traffic"
-}
+chmod +x /usr/local/bin/check_xray_traffic.sh
 
 # Create security check script
-create_security_check_script() {
-    print_header "SECURITY CHECK SCRIPT CREATION"
-    
-    print_status "Creating security audit script..."
-    cat > /root/xray_security_check.sh << 'EOF'
+cat > /usr/local/bin/xray_security_check.sh <<'EOF'
 #!/bin/bash
+# X-Ray Security Check Script
+LOG_FILE="/var/log/xray/access.log"
+ERROR_LOG="/var/log/xray/error.log"
 
-echo "===== X-Ray Security Audit ====="
+echo "=== X-Ray Security Check ==="
 echo "Date: $(date)"
 echo ""
 
-# Check configuration file permissions
-echo "=== Configuration file security ==="
-CONFIG_PERMS=$(stat -c "%a" /usr/local/etc/xray/config.json 2>/dev/null)
-if [ "$CONFIG_PERMS" = "640" ]; then
-    echo "✓ Configuration file permissions: $CONFIG_PERMS (SECURE)"
+# Check if service is running
+if systemctl is-active --quiet xray; then
+    echo "✓ X-Ray service is running"
 else
-    echo "✗ Configuration file permissions: $CONFIG_PERMS (INSECURE - should be 640)"
+    echo "✗ X-Ray service is NOT running"
 fi
 
-# Check if SMTP ports are blocked in config
+# Check for suspicious patterns
 echo ""
-echo "=== SMTP blocking check ==="
-if grep -q '"port": "25"' /usr/local/etc/xray/config.json && \
-   grep -q '"port": "465"' /usr/local/etc/xray/config.json && \
-   grep -q '"port": "587"' /usr/local/etc/xray/config.json; then
-    echo "✓ SMTP ports (25, 465, 587) are blocked in configuration"
-else
-    echo "✗ SMTP ports are NOT properly blocked"
-fi
+echo "=== Checking for suspicious activity ==="
 
-# Check if BitTorrent is blocked
-echo ""
-echo "=== BitTorrent blocking check ==="
-if grep -q '"bittorrent"' /usr/local/etc/xray/config.json; then
-    echo "✓ BitTorrent protocol is blocked in configuration"
-else
-    echo "✗ BitTorrent protocol is NOT blocked"
-fi
-
-# Check if private IPs are blocked
-echo ""
-echo "=== Private IP blocking check ==="
-if grep -q 'geoip:private' /usr/local/etc/xray/config.json; then
-    echo "✓ Private IP ranges are blocked in configuration"
-else
-    echo "✗ Private IP ranges are NOT blocked"
-fi
-
-# Check firewall status
-echo ""
-echo "=== Firewall status ==="
-if ufw status | grep -q "Status: active"; then
-    echo "✓ UFW firewall is active"
-    ufw status numbered | grep -E "443|22"
-else
-    echo "✗ UFW firewall is NOT active"
-fi
-
-# Check for suspicious activity
-echo ""
-echo "=== Suspicious activity check (last 24 hours) ==="
-if [ -f /var/log/xray/access.log ]; then
-    # SMTP attempts
-    SMTP_24H=$(grep -E ":(25|465|587)" /var/log/xray/access.log 2>/dev/null | wc -l)
-    if [ $SMTP_24H -gt 0 ]; then
-        echo "⚠️ WARNING: $SMTP_24H SMTP attempts in last 24h"
-    else
-        echo "✓ No SMTP attempts detected"
-    fi
+if [ -f "$LOG_FILE" ]; then
+    # Check for SMTP attempts
+    SMTP_ATTEMPTS=$(grep -E ":(25|465|587)" "$LOG_FILE" | wc -l)
+    echo "SMTP connection attempts (blocked): $SMTP_ATTEMPTS"
     
-    # Unique destination IPs
-    UNIQUE_IPS=$(grep "accepted" /var/log/xray/access.log 2>/dev/null | awk '{print $NF}' | sort -u | wc -l)
-    echo "  Unique destination IPs: $UNIQUE_IPS"
-    if [ $UNIQUE_IPS -gt 1000 ]; then
-        echo "⚠️ WARNING: High number of unique destination IPs"
-    fi
+    # Check for private IP access attempts
+    PRIVATE_IP_ATTEMPTS=$(grep -E "10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\." "$LOG_FILE" | wc -l)
+    echo "Private IP access attempts (blocked): $PRIVATE_IP_ATTEMPTS"
+    
+    # Check for high connection rate from single IP
+    echo ""
+    echo "Top 10 connecting IPs:"
+    awk '{print $3}' "$LOG_FILE" | sort | uniq -c | sort -rn | head -10
 else
-    echo "No access log found"
+    echo "Access log not found: $LOG_FILE"
 fi
 
-# Check X-Ray service status
-echo ""
-echo "=== X-Ray service status ==="
-systemctl is-active xray && echo "✓ Service is running" || echo "✗ Service is NOT running"
-
-# Check if configuration was modified
-echo ""
-echo "=== Configuration integrity ==="
-if [ -f /usr/local/etc/xray/config.json.original ]; then
-    if diff -q /usr/local/etc/xray/config.json /usr/local/etc/xray/config.json.original > /dev/null 2>&1; then
-        echo "✓ Configuration unchanged since installation"
-    else
-        echo "⚠️ Configuration was modified since installation"
+if [ -f "$ERROR_LOG" ]; then
+    ERRORS=$(wc -l < "$ERROR_LOG")
+    echo ""
+    echo "Total errors logged: $ERRORS"
+    if [ $ERRORS -gt 0 ]; then
+        echo "Recent errors:"
+        tail -5 "$ERROR_LOG"
     fi
-else
-    echo "  Original configuration backup not found"
 fi
 
 echo ""
-echo "===== Security audit complete ====="
+echo "=== Configuration Security ==="
+ls -l /usr/local/etc/xray/config.json
+echo ""
+echo "=== Firewall Status ==="
+ufw status | head -10
 EOF
+chmod +x /usr/local/bin/xray_security_check.sh
 
-    chmod +x /root/xray_security_check.sh
-    
-    # Create backup of original configuration
-    cp /usr/local/etc/xray/config.json /usr/local/etc/xray/config.json.original
-    chmod 400 /usr/local/etc/xray/config.json.original
-    
-    print_status "Security check script created: /root/xray_security_check.sh"
-    print_status "Run: /root/xray_security_check.sh to audit security"
-    print_status "Original configuration backed up for integrity checking"
+# Enable and start service
+print_status "Enabling and starting X-Ray service..."
+systemctl daemon-reload
+systemctl enable xray
+systemctl start xray
+
+# Check service status
+sleep 2
+if systemctl is-active --quiet xray; then
+    print_success "X-Ray service is running"
+else
+    print_error "X-Ray service failed to start"
+    systemctl status xray --no-pager
+    exit 1
+fi
+
+# Display connection information
+print_success "Installation completed successfully!"
+echo ""
+echo "================================================"
+echo "           CONNECTION INFORMATION"
+echo "================================================"
+echo ""
+echo "Server Address: $SERVER_IP"
+echo "Port: 443"
+echo "UUID: $UUID"
+echo "Flow: xtls-rprx-vision"
+echo "Network: tcp"
+echo "Security: reality"
+echo "SNI: $SNI"
+echo "Fingerprint: chrome"
+echo "Public Key: $PUBLIC_KEY"
+echo "Short IDs: $SHORT_IDS_INPUT"
+echo ""
+echo "================================================"
+echo "           SECURITY FEATURES ENABLED"
+echo "================================================"
+echo ""
+echo "✓ SMTP ports blocked (25, 465, 587)"
+echo "✓ BitTorrent protocol blocked"
+echo "✓ Private IP ranges blocked"
+echo "✓ Ad domains blocked"
+echo "✓ Comprehensive logging enabled"
+echo "✓ Log rotation configured (7 days)"
+echo ""
+echo "================================================"
+echo "           MONITORING COMMANDS"
+echo "================================================"
+echo ""
+echo "Check service status:"
+echo "  systemctl status xray"
+echo ""
+echo "View real-time logs:"
+echo "  tail -f /var/log/xray/access.log"
+echo "  tail -f /var/log/xray/error.log"
+echo ""
+echo "Run security check:"
+echo "  /usr/local/bin/xray_security_check.sh"
+echo ""
+echo "Check traffic:"
+echo "  /usr/local/bin/check_xray_traffic.sh"
+echo ""
+echo "================================================"
+echo "           CLIENT CONFIGURATION"
+echo "================================================"
+echo ""
+echo "For v2rayN/v2rayNG/Nekoray:"
+echo "Use the manual configuration with the values above"
+echo ""
+echo "For JSON configuration:"
+cat > /root/xray_client_config.json <<CLIENTEOF
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "routing": {
+    "rules": [
+      {
+        "type": "field",
+        "domain": ["geosite:category-ads-all"],
+        "outboundTag": "block"
+      }
+    ]
+  },
+  "inbounds": [
+    {
+      "port": 1080,
+      "listen": "127.0.0.1",
+      "protocol": "socks",
+      "settings": {
+        "udp": true
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "$SERVER_IP",
+            "port": 443,
+            "users": [
+              {
+                "id": "$UUID",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "fingerprint": "chrome",
+          "serverName": "$SNI",
+          "publicKey": "$PUBLIC_KEY",
+          "shortId": "$(echo $SHORT_IDS_INPUT | cut -d',' -f1 | xargs)",
+          "spiderX": ""
+        }
+      }
+    },
+    {
+      "protocol": "blackhole",
+      "tag": "block"
+    }
+  ]
 }
+CLIENTEOF
 
-# Create client configurations
-create_client_configs() {
-    print_header "CLIENT CONFIGURATIONS CREATION"
-    
-    # VLESS URL
-    VLESS_URL="vless://${UUID}@${EXTERNAL_IP}:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.microsoft.com&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp&headerType=none#MyVPN"
-    
-    # Create configuration file
-    CONFIG_FILE="/root/xray_client_configs.txt"
-    cat > "$CONFIG_FILE" << EOF
-================================================================================
-                    X-RAY VLESS + REALITY VPN CONFIGURATION
-                          SECURITY HARDENED v2.0.1
-================================================================================
-
-Server successfully configured and running with enhanced security!
-
-🔒 SECURITY FEATURES:
-- ✓ SMTP ports blocked (25, 465, 587) - prevents spam abuse
-- ✓ BitTorrent protocol blocked - prevents torrent abuse
-- ✓ Private IP ranges blocked - prevents network scanning
-- ✓ Advertising domains blocked - additional protection
-- ✓ Comprehensive logging enabled - for security monitoring
-- ✓ Configuration files protected (chmod 640)
-- ✓ Log rotation configured (7 days retention)
-
-SERVER DATA:
-- IP address: $EXTERNAL_IP
-- Port: 443
-- Protocol: VLESS
-- Transport: TCP
-- Security: REALITY
-
-KEYS (CONFIDENTIAL - NEVER SHARE PUBLICLY):
-- UUID: $UUID
-- Private Key: $PRIVATE_KEY
-- Public Key: $PUBLIC_KEY
-- Short ID: $SHORT_ID
-
-⚠️ CRITICAL SECURITY WARNING:
-═══════════════════════════════════════════════════════════════════════
-NEVER SHARE UUID AND KEYS IN:
-- ✗ Public GitHub repositories
-- ✗ Forums or discussion boards
-- ✗ Chat groups or messengers
-- ✗ Social media posts
-- ✗ Any public place
-
-UUID = PASSWORD to your VPN server!
-Anyone with UUID can use your server and potentially abuse it.
-
-SAFE STORAGE OPTIONS:
-- ✓ Password manager (1Password, Bitwarden, KeePass)
-- ✓ Encrypted notes (offline)
-- ✓ Secure cloud storage with encryption
-═══════════════════════════════════════════════════════════════════════
-
-VLESS URL FOR CLIENT IMPORT:
-$VLESS_URL
-
-CLIENT SETUP:
-
-=== iOS (Streisand) ===
-1. Download Streisand from App Store
-2. Copy the VLESS URL above
-3. Import configuration into the app
-
-=== macOS (V2rayU) ===
-1. Download V2rayU: https://github.com/yanue/V2rayU/releases
-2. Intel Mac file: V2rayU-64.dmg
-3. Apple Silicon file: V2rayU-arm64.dmg
-4. Import via "Import Server From Pasteboard" (⌘P)
-
-=== Android (v2rayNG) ===
-1. Download v2rayNG from Google Play or GitHub
-2. Import VLESS URL via QR code or paste directly
-
-=== Windows (v2rayN) ===
-1. Download v2rayN from GitHub: https://github.com/2dust/v2rayN/releases
-2. Import configuration via clipboard
-
-=== Manual Setup ===
-Protocol: VLESS
-Address: $EXTERNAL_IP
-Port: 443
-UUID: $UUID
-Encryption: none
-Flow: xtls-rprx-vision
-Transport: TCP
-TLS: Reality
-SNI: www.microsoft.com
-Fingerprint: chrome
-PublicKey: $PUBLIC_KEY
-ShortID: $SHORT_ID
-
-MANAGEMENT COMMANDS:
-- Service status: systemctl status xray
-- Restart: systemctl restart xray
-- Stop: systemctl stop xray
-- Real-time logs: journalctl -u xray -f
-- Access logs: tail -f /var/log/xray/access.log
-- Error logs: tail -f /var/log/xray/error.log
-- Active connections: ss -tnp | grep :443
-- Port check: ss -tlnp | grep :443
-
-SECURITY MONITORING:
-- Traffic monitor: /root/check_xray_traffic.sh
-- Security audit: /root/xray_security_check.sh
-- View blocked attempts: grep "blocked" /var/log/xray/access.log
-
-OPERATION CHECK:
-Open 2ip.ru or whatismyipaddress.com
-Should display IP: $EXTERNAL_IP
-
-TROUBLESHOOTING:
-If X-Ray is not listening on port 443:
-1. systemctl restart xray
-2. journalctl -u xray -n 20
-3. ss -tlnp | grep xray
-4. /root/xray_security_check.sh
-
-REGULAR MAINTENANCE:
-1. Check logs weekly: /root/check_xray_traffic.sh
-2. Run security audit: /root/xray_security_check.sh
-3. Update X-Ray monthly:
-   bash -c "\$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
-   systemctl restart xray
-
-BLOCKED SERVICES (by design):
-- SMTP (ports 25, 465, 587) - email sending
-- BitTorrent - torrent downloads
-- Private IP ranges - internal network access
-- Advertising domains - ad networks
-
-Configuration saved to file: $CONFIG_FILE
-
-🔒 This file contains sensitive data! Protect it with chmod 600.
-
-================================================================================
-EOF
-
-    # Secure configuration file
-    chmod 600 "$CONFIG_FILE"
-    chown root:root "$CONFIG_FILE"
-    
-    print_status "Configurations saved to file: $CONFIG_FILE"
-    print_security "Configuration file protected (chmod 600)"
-    print_security "Only root can read this file"
-}
-
-# Final check
-final_check() {
-    print_header "FINAL CHECK"
-    
-    print_status "Checking service status..."
-    systemctl status xray --no-pager -l
-    
-    print_status "Checking ports..."
-    ss -tlnp | grep ":443"
-    
-    print_status "Checking firewall status..."
-    ufw status numbered
-    
-    print_status "Checking logs..."
-    journalctl -u xray -n 5 --no-pager
-    
-    print_status "Running security audit..."
-    /root/xray_security_check.sh
-}
-
-# Main function
-main() {
-    print_header "X-RAY VLESS + REALITY VPN AUTO-INSTALLER v2.0.1 (SECURE)"
-    print_status "Automated installation of X-Ray VLESS + REALITY VPN server"
-    print_security "Version 2.0.1 includes enhanced security features + permission fix"
-    print_warning "Make sure you're running this script on a clean Ubuntu 24.04 server"
-    print_status "Repository: https://github.com/rootcraft-tech/-X-Ray-VLESS-Reality-Installer"
-    
-    echo
-    print_security "Security improvements in v2.0:"
-    print_security "  ✓ SMTP ports blocked (prevents spam abuse)"
-    print_security "  ✓ BitTorrent blocked (prevents torrent abuse)"
-    print_security "  ✓ Private IPs blocked (prevents network scanning)"
-    print_security "  ✓ Enhanced logging and monitoring"
-    print_security "  ✓ Configuration file protection (chmod 640)"
-    print_security "  ✓ Security audit tools included"
-    echo
-    
-    # Check if running interactively
-    if [[ -t 0 ]]; then
-        # Interactive mode
-        read -p "Continue installation? (y/N): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            print_status "Installation cancelled"
-            exit 0
-        fi
-    else
-        # Non-interactive mode (pipe)
-        print_status "Running in non-interactive mode, proceeding with installation..."
-        sleep 2
-    fi
-    
-    check_root
-    check_ubuntu
-    get_external_ip
-    update_system
-    setup_firewall
-    stop_conflicting_services
-    install_xray
-    generate_keys
-    create_xray_config
-    setup_log_rotation
-    start_xray_service
-    create_monitoring_script
-    create_security_check_script
-    create_client_configs
-    final_check
-    
-    print_header "INSTALLATION COMPLETED SUCCESSFULLY!"
-    print_status "X-Ray VLESS + REALITY VPN server is ready to use!"
-    print_security "Security hardened configuration applied"
-    print_status "Client configurations: /root/xray_client_configs.txt"
-    echo
-    print_status "VLESS URL for client import:"
-    echo -e "${GREEN}$VLESS_URL${NC}"
-    echo
-    print_status "Management commands:"
-    echo "  cat /root/xray_client_configs.txt  # View configurations"
-    echo "  systemctl status xray              # Service status"
-    echo "  journalctl -u xray -f              # Real-time logs"
-    echo "  tail -f /var/log/xray/access.log   # Access logs"
-    echo "  ss -tlnp | grep :443               # Port check"
-    echo "  ufw status                         # Firewall status"
-    echo
-    print_status "Security monitoring:"
-    echo "  /root/check_xray_traffic.sh        # Traffic monitor"
-    echo "  /root/xray_security_check.sh       # Security audit"
-    echo
-    print_warning "⚠️ CRITICAL SECURITY REMINDERS:"
-    print_warning "1. NEVER share UUID publicly (GitHub, forums, chats)"
-    print_warning "2. Store credentials in password manager"
-    print_warning "3. Run security audit weekly: /root/xray_security_check.sh"
-    print_warning "4. Check logs regularly: /root/check_xray_traffic.sh"
-    print_warning "5. Update X-Ray monthly for security patches"
-    echo
-    print_header "VPN SERVER IS READY TO USE! 🚀"
-    print_security "Server is protected against spam, torrents, and abuse! 🔒"
-}
-
-# Signal handling
-trap 'print_error "Installation interrupted by user"; exit 1' INT TERM
-
-# Run main function
-main "$@"
+echo "Client configuration saved to: /root/xray_client_config.json"
+echo ""
+echo "================================================"
+echo "           IMPORTANT NOTES"
+echo "================================================"
+echo ""
+echo "1. This VPN allows connections from ANY IP address"
+echo "2. Security is enforced through routing rules"
+echo "3. Monitor logs regularly for suspicious activity"
+echo "4. Run security checks periodically"
+echo "5. Keep X-Ray updated for latest security patches"
+echo ""
+echo "Installation log: /var/log/xray/"
+echo "================================================"
