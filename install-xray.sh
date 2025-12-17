@@ -3,9 +3,15 @@
 # X-Ray VLESS + REALITY VPN Automated Installation Script (SECURE VERSION)
 # Based on the guide: "Creating VPN Server with X-Ray VLESS + REALITY"
 # Compatible with Ubuntu 24.04 LTS
-# Version: 2.0 (Security Hardened)
+# Version: 2.1 (Fixed IP Detection)
 # Author: ViT
 # Repository: https://github.com/rootcraft-tech/-X-Ray-VLESS-Reality-Installer
+#
+# CHANGES in v2.1:
+# ✓ Fixed IP detection with more reliable services
+# ✓ Better error handling for blocked IP services
+# ✓ Fallback to manual IP input
+# ✓ IP validation added
 #
 # SECURITY IMPROVEMENTS v2.0:
 # ✓ Blocks SMTP ports (25, 465, 587) - prevents spam relay
@@ -84,24 +90,123 @@ check_ubuntu() {
     fi
 }
 
-# Get external IP address
+# Validate IP address format
+validate_ip() {
+    local ip=$1
+    local valid_ipv4_regex='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
+    local valid_ipv6_regex='^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$'
+    
+    # Check if it's HTML error page
+    if echo "$ip" | grep -q "<html>"; then
+        return 1
+    fi
+    
+    # Check IPv4
+    if [[ $ip =~ $valid_ipv4_regex ]]; then
+        # Validate each octet is 0-255
+        IFS='.' read -ra ADDR <<< "$ip"
+        for i in "${ADDR[@]}"; do
+            if [[ $i -gt 255 ]]; then
+                return 1
+            fi
+        done
+        return 0
+    fi
+    
+    # Check IPv6
+    if [[ $ip =~ $valid_ipv6_regex ]]; then
+        return 0
+    fi
+    
+    return 1
+}
+
+# Get external IP address with improved detection
 get_external_ip() {
     print_status "Detecting external IP address..."
     
-    # Priority to IPv4 addresses
-    EXTERNAL_IP=$(curl -s -4 ifconfig.me 2>/dev/null || curl -s -4 ipinfo.io/ip 2>/dev/null || curl -s -4 icanhazip.com 2>/dev/null)
+    # List of IP detection services (more reliable ones first)
+    local ip_services=(
+        "https://api.ipify.org"
+        "https://ipecho.net/plain"
+        "https://icanhazip.com"
+        "https://ident.me"
+        "https://ipinfo.io/ip"
+        "https://ifconfig.me/ip"
+        "https://checkip.amazonaws.com"
+        "https://ip.seeip.org"
+    )
     
-    # If IPv4 not found, try IPv6
+    EXTERNAL_IP=""
+    
+    # Try each service
+    for service in "${ip_services[@]}"; do
+        print_status "Trying $service..."
+        
+        # Try IPv4 first
+        IP_CANDIDATE=$(curl -s -4 --connect-timeout 5 --max-time 10 "$service" 2>/dev/null | tr -d '[:space:]')
+        
+        if [[ -n "$IP_CANDIDATE" ]] && validate_ip "$IP_CANDIDATE"; then
+            EXTERNAL_IP="$IP_CANDIDATE"
+            print_status "Successfully detected IPv4: $EXTERNAL_IP"
+            break
+        fi
+        
+        # If IPv4 failed, try IPv6
+        IP_CANDIDATE=$(curl -s -6 --connect-timeout 5 --max-time 10 "$service" 2>/dev/null | tr -d '[:space:]')
+        
+        if [[ -n "$IP_CANDIDATE" ]] && validate_ip "$IP_CANDIDATE"; then
+            EXTERNAL_IP="$IP_CANDIDATE"
+            print_status "Successfully detected IPv6: $EXTERNAL_IP"
+            break
+        fi
+    done
+    
+    # If automatic detection failed
     if [[ -z "$EXTERNAL_IP" ]]; then
-        EXTERNAL_IP=$(curl -s -6 ifconfig.me 2>/dev/null || curl -s -6 ipinfo.io/ip 2>/dev/null || curl -s -6 icanhazip.com 2>/dev/null)
+        print_warning "Automatic IP detection failed"
+        print_warning "This can happen if your VPS provider blocks IP detection services"
+        
+        # Try to get IP from network interface
+        print_status "Attempting to detect IP from network interfaces..."
+        
+        # Get public IP from main network interface
+        IFACE_IP=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -n1)
+        
+        if [[ -n "$IFACE_IP" ]] && validate_ip "$IFACE_IP"; then
+            print_status "Found IP on network interface: $IFACE_IP"
+            
+            if [[ -t 0 ]]; then
+                read -p "Use this IP address? (y/N): " -n 1 -r
+                echo
+                if [[ $REPLY =~ ^[Yy]$ ]]; then
+                    EXTERNAL_IP="$IFACE_IP"
+                fi
+            else
+                print_status "Non-interactive mode: using interface IP"
+                EXTERNAL_IP="$IFACE_IP"
+            fi
+        fi
     fi
     
+    # If still no IP, prompt for manual input
     if [[ -z "$EXTERNAL_IP" ]]; then
-        print_error "Failed to detect external IP address"
         if [[ -t 0 ]]; then
-            read -p "Enter server external IP address manually: " EXTERNAL_IP
+            while true; do
+                echo
+                print_warning "Please enter your server's external IP address manually"
+                print_status "You can find it in your VPS provider's control panel"
+                read -p "Enter IP address: " EXTERNAL_IP
+                
+                if validate_ip "$EXTERNAL_IP"; then
+                    break
+                else
+                    print_error "Invalid IP address format. Please try again."
+                fi
+            done
         else
-            print_error "Cannot prompt for IP in non-interactive mode"
+            print_error "Cannot prompt for IP in non-interactive mode and auto-detection failed"
+            print_error "Please check your network connectivity or VPS provider's firewall rules"
             exit 1
         fi
     fi
@@ -589,7 +694,7 @@ create_client_configs() {
     CONFIG_FILE="/root/xray_client_configs.txt"
     cat > "$CONFIG_FILE" << EOF
 ================================================================================
-              X-RAY VLESS + REALITY VPN CONFIGURATION (v2.0 SECURE)
+              X-RAY VLESS + REALITY VPN CONFIGURATION (v2.1 SECURE)
 ================================================================================
 
 Server successfully configured and running with ENHANCED SECURITY!
@@ -776,7 +881,7 @@ final_check() {
 
 # Main function
 main() {
-    print_header "X-RAY VLESS + REALITY VPN AUTO-INSTALLER v2.0 (SECURE)"
+    print_header "X-RAY VLESS + REALITY VPN AUTO-INSTALLER v2.1 (FIXED IP DETECTION)"
     print_status "Automated installation of SECURE X-Ray VLESS + REALITY VPN server"
     print_warning "Make sure you're running this script on a clean Ubuntu 24.04 server"
     print_status "Repository: https://github.com/rootcraft-tech/-X-Ray-VLESS-Reality-Installer"
