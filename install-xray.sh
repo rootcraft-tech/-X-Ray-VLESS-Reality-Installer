@@ -325,9 +325,9 @@ generate_keys() {
     print_status "Generating REALITY keys..."
     KEYS_OUTPUT=$(/usr/local/bin/xray x25519)
     
-    # Extract keys from X-Ray 25.9.11+ format
-    PRIVATE_KEY=$(echo "$KEYS_OUTPUT" | grep "PrivateKey:" | cut -d' ' -f2)
-    PUBLIC_KEY=$(echo "$KEYS_OUTPUT" | grep "Password:" | cut -d' ' -f2)
+    # Extract keys from both old and new X-Ray output formats
+    PRIVATE_KEY=$(echo "$KEYS_OUTPUT" | awk -F': ' '/^PrivateKey:/{print $2}')
+    PUBLIC_KEY=$(echo "$KEYS_OUTPUT" | awk -F': ' '/^Password( \(PublicKey\))?:/{print $2}')
     
     # Check that keys are not empty
     if [[ -z "$PRIVATE_KEY" || -z "$PUBLIC_KEY" ]]; then
